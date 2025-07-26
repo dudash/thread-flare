@@ -1,0 +1,22 @@
+# Thread Flare Pod Configuration
+# Available variants:
+#   thread-flare-slim:latest  - CPU-only, smaller image
+#   thread-flare-cuda:latest  - GPU-enabled, requires GPU nodes
+apiVersion: v1
+kind: Pod
+metadata:
+  name: thread-flare
+  labels:
+    app: thread-flare
+spec:
+  containers:
+  - name: thread-flare
+    image: thread-flare-slim:latest  # Change to thread-flare-cuda:latest for GPU support
+    resources:
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+  restartPolicy: Never

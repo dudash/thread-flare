@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.3
+# SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-License-Identifier: Apache-2.0
+
+###############################################################################
+# 🟢 Default: Use public Docker Hub CUDA base (no authentication required)
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04 AS base
+
+# 🔒 Alternative: Use NVIDIA NGC private image (requires docker login)
+# To enable this, uncomment the next 2 lines and comment out the FROM above.
+# ARG NGC_CLI_API_KEY
+# FROM nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 AS base
+
+###############################################################################
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/opt/conda/bin:$PATH"
+
+# System tools
+RUN apt-get update && apt-get install -y \
+    wget \
+    bzip2 \
+    ca-certificates \
+    curl \
+    libgl1-mesa-glx \
+    vim \
+    git \
+    procps \
+    strace \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Miniforge (lightweight conda)
+RUN wget -O /tmp/miniforge.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh" \
+    && bash /tmp/miniforge.sh -b -p /opt/conda \
+    && rm /tmp/miniforge.sh
+
+# Mamba install (faster conda)
+RUN conda install -y mamba -n base -c conda-forge
+
+# Python environment creation
+RUN mamba create -y -n raydebug python=3.10 && conda clean --all --yes
+
+# Install tini system-wide
+RUN apt-get update && apt-get install -y tini && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Shell and pip installs
+SHELL ["/bin/bash", "-c"]
+RUN source activate raydebug && \
+    pip install --no-cache-dir \
+        ray[all]==2.37.0 \
+        psutil
+
+# Optional: export your API key inside the container (commented out)
+# ENV NGC_CLI_API_KEY=${NGC_CLI_API_KEY}
+
+# Copy in debug script
+COPY thread_flare.py /workspace/thread_flare.py
+WORKDIR /workspace
+
+# Entrypoint using tini for proper signal handling
+ENTRYPOINT ["tini", "--"]
+CMD ["/opt/conda/envs/raydebug/bin/python", "/workspace/thread_flare.py"]
