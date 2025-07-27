@@ -29,29 +29,62 @@ def print_proc_limits():
     except Exception as e:
         log(f"Failed to get process limits via resource module: {e}")
     
-    # Try ulimit with error handling
+    # Try ulimit with multiple fallback approaches
+    ulimit_success = False
+    
+    # Try ulimit -u (user processes)
     try:
         ulimit_result = subprocess.run(['sh', '-c', 'ulimit -u'], 
                                      capture_output=True, text=True, timeout=5)
         if ulimit_result.returncode == 0:
             log(f"ulimit -u: {ulimit_result.stdout.strip()}")
+            ulimit_success = True
         else:
             log(f"ulimit -u failed: {ulimit_result.stderr.strip()}")
     except Exception as e:
-        log(f"ulimit command not available: {e}")
+        log(f"ulimit -u command failed: {e}")
+    
+    # Try alternative ulimit commands if -u failed
+    if not ulimit_success:
+        try:
+            # Try ulimit -a (all limits) and extract process info
+            ulimit_result = subprocess.run(['sh', '-c', 'ulimit -a'], 
+                                         capture_output=True, text=True, timeout=5)
+            if ulimit_result.returncode == 0:
+                for line in ulimit_result.stdout.split('\n'):
+                    if 'process' in line.lower() or 'nproc' in line.lower():
+                        log(f"ulimit info: {line.strip()}")
+                        ulimit_success = True
+            else:
+                log(f"ulimit -a also failed: {ulimit_result.stderr.strip()}")
+        except Exception as e:
+            log(f"ulimit -a command failed: {e}")
+    
+    # Provide helpful context if ulimit completely failed
+    if not ulimit_success:
+        log("→ ulimit commands not supported in this container environment")
+        log("→ This is common in some container runtimes (Docker, Podman, etc.)")
+        log("→ Process limits are still enforced by the container runtime and cgroups")
 
-def test_thread_limit():
+def test_thread_limit(thread_limit=None):
     log("=== Spawning threads until failure ===")
     threads = []
+    count = 0
     try:
         while True:
+            if thread_limit is not None and count >= thread_limit:
+                log(f"Thread limit reached: {thread_limit}")
+                break
             t = threading.Thread(target=time.sleep, args=(10,))
             t.start()
             threads.append(t)
-            if len(threads) % 100 == 0:
-                log(f"Created {len(threads)} threads...")
+            count += 1
+            if count % 100 == 0:
+                log(f"Created {count} threads...")
     except Exception as e:
-        log(f"Thread creation failed at {len(threads)} threads: {e}")
+        log(f"Thread creation failed at {count} threads: {e}")
+    log(f"Total threads spawned: {len(threads)}")
+    return len(threads)
 
 def check_cgroup_v1_limits():
     """Test cgroup v1 detection and limits"""
@@ -636,9 +669,75 @@ def test_file_descriptor_limits():
         log(f"File descriptor test failed: {e}")
 
 if __name__ == "__main__":
+    # Parse thread limit from env and CLI
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--thread-limit', type=int, help='Maximum number of threads to spawn')
+    args, unknown = parser.parse_known_args()
+    env_limit = os.environ.get("THREAD_LIMIT")
+    cli_limit = args.thread_limit
+    thread_limit = None
+    try:
+        env_limit = int(env_limit) if env_limit is not None else None
+    except Exception:
+        env_limit = None
+    if env_limit is not None and cli_limit is not None:
+        thread_limit = min(env_limit, cli_limit)
+    elif env_limit is not None:
+        thread_limit = env_limit
+    elif cli_limit is not None:
+        thread_limit = cli_limit
+    else:
+        thread_limit = None
+    if thread_limit is not None:
+        log(f"Thread limit set to: {thread_limit}")
+    test_thread_limit(thread_limit=thread_limit)
+
+    # Parse thread limit from env and CLI
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--thread-limit', type=int, help='Maximum number of threads to spawn')
+    args, unknown = parser.parse_known_args()
+    env_limit = os.environ.get("THREAD_LIMIT")
+    cli_limit = args.thread_limit
+    thread_limit = None
+    try:
+        env_limit = int(env_limit) if env_limit is not None else None
+    except Exception:
+        env_limit = None
+    if env_limit is not None and cli_limit is not None:
+        thread_limit = min(env_limit, cli_limit)
+    elif env_limit is not None:
+        thread_limit = env_limit
+    elif cli_limit is not None:
+        thread_limit = cli_limit
+    else:
+        thread_limit = None
+    if thread_limit is not None:
+        log(f"Thread limit set to: {thread_limit}")
+    test_thread_limit(thread_limit=thread_limit)
+
     log("Starting Thread Flare (nv-ingest compatible)...")
     log(f"Python version: {sys.version}")
-    
+
+    # === Cgroup/Process Limits Section ===
+    log("=== Cgroup/Process Limits ===")
+    # /sys/fs/cgroup/pids/pids.max
+    try:
+        with open("/sys/fs/cgroup/pids/pids.max") as f:
+            val = f.read().strip()
+            log(f"/sys/fs/cgroup/pids/pids.max: {val}")
+    except Exception as e:
+        log(f"/sys/fs/cgroup/pids/pids.max: Not found or error: {e}")
+    # /proc/self/limits (processes)
+    try:
+        with open("/proc/self/limits") as f:
+            for line in f:
+                if "processes" in line.lower():
+                    log(f"/proc/self/limits (processes): {line.strip()}")
+    except Exception as e:
+        log(f"/proc/self/limits: Not found or error: {e}")
+
     # Basic system checks
     print_proc_limits()
     print_system_info()

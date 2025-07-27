@@ -11,7 +11,12 @@ metadata:
 spec:
   containers:
   - name: thread-flare
-    image: thread-flare-slim:latest  # Change to thread-flare-cuda:latest for GPU support
+    image: thread-flare-slim:latest
+    imagePullPolicy: Never
+    env:
+      - name: THREAD_LIMIT
+        value: "5000"  # Set to desired thread cap to test, or remove for unlimited
+
     resources:
       limits:
         cpu: "2"

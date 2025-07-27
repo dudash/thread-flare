@@ -12,8 +12,41 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-VARIANT="${1:-slim}"  # Default to slim, accept slim/cuda as argument
+# Usage/help
+usage() {
+    echo "Usage: $0 [slim|cuda] [--thread-limit N]"
+    echo "  slim: CPU-only container (default)"
+    echo "  cuda: GPU-enabled container with CUDA support"
+    echo "  --thread-limit N: Limit the number of threads spawned inside the container"
+    exit 1
+}
+
+# Parse args
+VARIANT="slim"
+THREAD_LIMIT=""
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        slim|cuda)
+            VARIANT="$1"
+            shift
+            ;;
+        --thread-limit)
+            THREAD_LIMIT="$2"
+            shift
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
 
 case "$VARIANT" in
     "slim")
@@ -27,10 +60,7 @@ case "$VARIANT" in
         echo -e "${BLUE}Using Thread Flare CUDA (GPU-enabled) variant${NC}"
         ;;
     *)
-        echo "Usage: $0 [slim|cuda]"
-        echo "  slim: CPU-only container (default)"
-        echo "  cuda: GPU-enabled container with CUDA support"
-        exit 1
+        usage
         ;;
 esac
 
@@ -77,7 +107,14 @@ Test Output:
 EOF
 
 # Run the container and capture output
-if docker run ${DOCKER_ARGS} "${IMAGE_NAME}" 2>&1 | tee -a "${LOG_FILE}"; then
+DOCKER_ENV_ARGS=""
+DOCKER_CLI_ARG=""
+if [ -n "$THREAD_LIMIT" ]; then
+    DOCKER_ENV_ARGS="-e THREAD_LIMIT=$THREAD_LIMIT"
+    DOCKER_CLI_ARG="--thread-limit $THREAD_LIMIT"
+    echo -e "${YELLOW}Thread limit set to: $THREAD_LIMIT${NC}"
+fi
+if docker run ${DOCKER_ARGS} $DOCKER_ENV_ARGS "${IMAGE_NAME}" $DOCKER_CLI_ARG 2>&1 | tee -a "${LOG_FILE}"; then
     echo -e "\n${GREEN}✅ Thread Flare completed successfully!${NC}"
     EXIT_CODE=0
 else
@@ -92,6 +129,7 @@ cat >> "${LOG_FILE}" << EOF
 Test Completed: $(date)
 Exit Code: ${EXIT_CODE}
 EOF
+
 
 # Generate summary
 echo -e "${YELLOW}Generating summary...${NC}"
@@ -115,12 +153,17 @@ echo "Python Version:" >> "${SUMMARY_FILE}"
 grep "Python version:" "${LOG_FILE}" | head -1 >> "${SUMMARY_FILE}" 2>/dev/null || echo "  Not found" >> "${SUMMARY_FILE}"
 
 echo "" >> "${SUMMARY_FILE}"
-echo "System Resources:" >> "${SUMMARY_FILE}"
-grep -E "(CPU cores|Memory total|Memory available|Memory used)" "${LOG_FILE}" >> "${SUMMARY_FILE}" 2>/dev/null || echo "  Not found" >> "${SUMMARY_FILE}"
+echo "" >> "${SUMMARY_FILE}"
+echo "Test Status:" >> "${SUMMARY_FILE}"
+grep -E "(Thread creation failed|Total threads spawned|Thread limit reached)" "${LOG_FILE}" >> "${SUMMARY_FILE}" 2>/dev/null || echo "  No thread creation failure detected" >> "${SUMMARY_FILE}"
 
 echo "" >> "${SUMMARY_FILE}"
 echo "Environment Detection:" >> "${SUMMARY_FILE}"
 grep -E "(Container type|Kubernetes environment|Architecture|Platform)" "${LOG_FILE}" >> "${SUMMARY_FILE}" 2>/dev/null || echo "  Not found" >> "${SUMMARY_FILE}"
+
+echo "" >> "${SUMMARY_FILE}"
+echo "System Resources:" >> "${SUMMARY_FILE}"
+grep -E "(CPU cores|Memory total|Memory available|Memory used)" "${LOG_FILE}" >> "${SUMMARY_FILE}" 2>/dev/null || echo "  Not found" >> "${SUMMARY_FILE}"
 
 echo "" >> "${SUMMARY_FILE}"
 echo "GPU Detection:" >> "${SUMMARY_FILE}"

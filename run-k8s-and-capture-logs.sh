@@ -5,16 +5,46 @@
 
 set -e
 
+# Usage/help
+usage() {
+    echo "Usage: $0 [--thread-limit N]"
+    echo "  --thread-limit N: Limit the number of threads spawned inside the container"
+    echo "  Set VARIANT=cuda for CUDA variant, NAMESPACE, TIMEOUT, etc. as env vars."
+    exit 1
+}
+
+# Parse args
+THREAD_LIMIT=""
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        --thread-limit)
+            THREAD_LIMIT="$2"
+            shift
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
 # Configuration
-VARIANT="${VARIANT:-slim}"  # Default to slim, accept slim/cuda as argument
+VARIANT="${VARIANT:-slim}"
 NAMESPACE="${NAMESPACE:-default}"
 POD_NAME="thread-flare"
 LOG_DIR="./logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="${LOG_DIR}/thread_flare_openshift_${TIMESTAMP}.log"
-SUMMARY_FILE="${LOG_DIR}/thread_flare_openshift_${TIMESTAMP}_summary.txt"
-TIMEOUT="${TIMEOUT:-300}" # 5 minutes default timeout
-KUBE_CMD="${KUBE_CMD:-oc}"  # Use 'kubectl' if not using OpenShift
+LOG_FILE="${LOG_DIR}/thread_flare_k8s_${TIMESTAMP}.log"
+SUMMARY_FILE="${LOG_DIR}/thread_flare_k8s_${TIMESTAMP}_summary.txt"
+TIMEOUT="${TIMEOUT:-300}"
+KUBE_CMD="${KUBE_CMD:-oc}"
 
 # Determine image name based on variant
 case "$VARIANT" in
@@ -27,10 +57,7 @@ case "$VARIANT" in
         echo -e "${BLUE}Using Thread Flare CUDA (GPU-enabled) variant${NC}"
         ;;
     *)
-        echo "Usage: VARIANT=[slim|cuda] $0"
-        echo "  slim: CPU-only container (default)"
-        echo "  cuda: GPU-enabled container with CUDA support"
-        exit 1
+        usage
         ;;
 esac
 
@@ -41,7 +68,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}Thread Flare - OpenShift/K8s Log Capture Script${NC}"
+echo -e "${BLUE}Thread Flare - K8s Log Capture Script${NC}"
 echo "=============================================="
 
 # Create logs directory if it doesn't exist
@@ -69,25 +96,25 @@ else
 fi
 
 # Check if pod YAML exists
-if [ ! -f "openshift-pod-updated.yaml" ] && [ ! -f "openshift-pod.yaml" ]; then
+if [ ! -f "pod-updated.yaml" ] && [ ! -f "pod.yaml" ]; then
     echo -e "${RED}Error: Pod YAML file not found${NC}"
-    echo "Please run ./build-and-deploy.sh first to generate openshift-pod-updated.yaml"
-    echo "Or ensure openshift-pod.yaml exists"
+    echo "Please run ./build-and-deploy.sh first to generate pod-updated.yaml"
+    echo "Or ensure pod.yaml exists"
     exit 1
 fi
 
 # Determine which YAML file to use
-if [ -f "openshift-pod-updated.yaml" ]; then
-    POD_YAML="openshift-pod-updated.yaml"
+if [ -f "pod-updated.yaml" ]; then
+    POD_YAML="pod-updated.yaml"
 else
-    POD_YAML="openshift-pod.yaml"
+    POD_YAML="pod.yaml"
 fi
 
 echo -e "${YELLOW}Using pod definition: ${POD_YAML}${NC}"
 
 # Create log file header
 cat > "${LOG_FILE}" << EOF
-Thread Flare OpenShift/K8s Test Results
+Thread Flare K8s Test Results
 =======================================
 Timestamp: $(date)
 Host: $(hostname)
@@ -112,12 +139,12 @@ trap cleanup_pod EXIT
 
 # Deploy the pod
 echo -e "${YELLOW}Deploying Thread Flare pod...${NC}"
-if ${KUBE_CMD} apply -f "${POD_YAML}" -n ${NAMESPACE} >> "${LOG_FILE}" 2>&1; then
-    echo -e "${GREEN}✅ Pod deployed successfully${NC}"
-else
-    echo -e "${RED}❌ Failed to deploy pod${NC}"
-    echo "Check the log file for details: ${LOG_FILE}"
-    exit 1
+${KUBE_CMD} apply -f "${POD_YAML}" -n "${NAMESPACE}" | tee -a "${LOG_FILE}"
+
+# If thread limit is set, patch the env var
+if [ -n "$THREAD_LIMIT" ]; then
+    echo -e "${YELLOW}Setting THREAD_LIMIT to $THREAD_LIMIT in pod...${NC}"
+    ${KUBE_CMD} set env pod/${POD_NAME} THREAD_LIMIT=${THREAD_LIMIT} -n "${NAMESPACE}" | tee -a "${LOG_FILE}"
 fi
 
 # Wait for pod to be ready
@@ -193,7 +220,7 @@ echo -e "${YELLOW}Generating summary...${NC}"
 TIMESTAMP=$(date '+%a %b %d %H:%M:%S %Z %Y')
 
 cat > "${SUMMARY_FILE}" << EOF
-Thread Flare Test Summary (OpenShift)
+Thread Flare Test Summary (K8s)
 ====================================
 Timestamp: ${TIMESTAMP}
 Namespace: ${NAMESPACE}
@@ -209,8 +236,17 @@ echo "Python Version:" >> "${SUMMARY_FILE}"
 grep "Python version:" "${LOG_FILE}" | head -1 >> "${SUMMARY_FILE}" 2>/dev/null || echo "  Not found" >> "${SUMMARY_FILE}"
 
 echo "" >> "${SUMMARY_FILE}"
-echo "System Resources:" >> "${SUMMARY_FILE}"
-grep -E "(CPU cores|Memory total|Memory available|Memory used)" "${LOG_FILE}" >> "${SUMMARY_FILE}" 2>/dev/null || echo "  Not found" >> "${SUMMARY_FILE}"
+echo "Cgroup/Process Limits:" >> "${SUMMARY_FILE}"
+if ${KUBE_CMD} exec ${POD_NAME} -n ${NAMESPACE} -- test -f /sys/fs/cgroup/pids/pids.max 2>/dev/null; then
+    echo "/sys/fs/cgroup/pids/pids.max:" >> "${SUMMARY_FILE}"
+    ${KUBE_CMD} exec ${POD_NAME} -n ${NAMESPACE} -- cat /sys/fs/cgroup/pids/pids.max 2>/dev/null >> "${SUMMARY_FILE}"
+fi
+echo "/proc/self/limits (processes):" >> "${SUMMARY_FILE}"
+${KUBE_CMD} exec ${POD_NAME} -n ${NAMESPACE} -- cat /proc/self/limits | grep processes 2>/dev/null >> "${SUMMARY_FILE}"
+
+echo "" >> "${SUMMARY_FILE}"
+echo "Test Status:" >> "${SUMMARY_FILE}"
+grep -E "(Thread creation failed|Total threads spawned|Thread limit reached)" "${LOG_FILE}" >> "${SUMMARY_FILE}" 2>/dev/null || echo "  No thread creation failure detected" >> "${SUMMARY_FILE}"
 
 echo "" >> "${SUMMARY_FILE}"
 echo "Environment Detection:" >> "${SUMMARY_FILE}"

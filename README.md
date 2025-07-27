@@ -100,8 +100,11 @@ Thread Flare includes scripts to automatically capture and analyze detailed test
 
 ```bash
 # Run Thread Flare locally and save logs to timestamped files
-./run-and-capture-logs.sh
+./run-and-capture-logs.sh [slim|cuda] [--thread-limit N]
 ```
+
+- `slim` or `cuda` selects the container variant (default: slim)
+- `--thread-limit N` limits the number of threads spawned (overrides env var)
 
 This creates:
 - `logs/thread_flare_YYYYMMDD_HHMMSS.log` - Complete detailed output
@@ -111,10 +114,18 @@ This creates:
 
 ```bash
 # Deploy to K8s and capture logs
-./run-k8s-and-capture-logs.sh
+./run-k8s-and-capture-logs.sh [--thread-limit N]
 
 # With custom namespace and timeout
-NAMESPACE=my-namespace TIMEOUT=600 ./run-k8s-and-capture-logs.sh
+NAMESPACE=my-namespace TIMEOUT=600 ./run-k8s-and-capture-logs.sh --thread-limit 5000
+```
+
+- `--thread-limit N` limits the number of threads spawned (overrides env var)
+
+You can also pass a CLI argument directly if running the Python script:
+
+```bash
+docker run --rm thread-flare-slim:latest python /workspace/thread_flare.py --thread-limit 5000
 ```
 
 This automatically:
@@ -133,12 +144,15 @@ The summary files extract key information:
 - **Thread limit** testing results
 - **Test status** and any failures
 
-Example summary output:
+Example summary snippet:
 ```
 Python Version: 3.12.11
 System Resources: 16 CPU cores, 15.03 GB RAM, 10.72 GB available, 28.7% used
 Environment: Docker container, x86_64 architecture
 GPU Detection: nvidia-smi found 2 GPUs (RTX 4090, 24GB each) or "Command not found"
+=== Cgroup/Process Limits ===
+/sys/fs/cgroup/pids/pids.max: 18456
+/proc/self/limits (processes): Max processes            4096                 4096                 processes
 Cgroup v2: pids.max: 18456, memory.max: unlimited
 Ray Resources: 16 CPU, 9.97GB memory, 4.27GB object store
 Thread Test: Created 18,391 threads before failure
@@ -150,7 +164,7 @@ Test Status: ✅ All tests completed successfully
 
 - `Dockerfile` - Container definition with Python 3.12, Ray 2.37.0+, and psutil
 - `thread_flare.py` - Main Thread Flare script that runs all tests
-- `openshift-pod.yaml` - OpenShift pod specification
+- `pod.yaml` - k8s pod specification
 - `build-and-deploy.sh` - Build and deployment helper script
 - `run-and-capture-logs.sh` - **NEW**: Run locally and capture detailed logs to files
 - `run-k8s-and-capture-logs.sh` - **NEW**: Deploy to K8s and capture logs
@@ -180,6 +194,7 @@ The container will output timestamped logs showing:
 - Python version (should be 3.12.x)
 - System process limits and file descriptor limits
 - CPU and memory information via psutil
+- GPU info if available (using -cuda variant)
 - Comprehensive cgroup v1 detection (mounts, pids.max, memory limits)
 - Comprehensive cgroup v2 detection (mounts, pids.max, memory.max, cpu.max)
 - Signal handling capabilities (including PDEATHSIG)
