@@ -669,7 +669,6 @@ def test_file_descriptor_limits():
         log(f"File descriptor test failed: {e}")
 
 if __name__ == "__main__":
-    # Parse thread limit from env and CLI
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--thread-limit', type=int, help='Maximum number of threads to spawn')
@@ -689,35 +688,8 @@ if __name__ == "__main__":
         thread_limit = cli_limit
     else:
         thread_limit = None
-    if thread_limit is not None:
-        log(f"Thread limit set to: {thread_limit}")
-    test_thread_limit(thread_limit=thread_limit)
 
-    # Parse thread limit from env and CLI
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--thread-limit', type=int, help='Maximum number of threads to spawn')
-    args, unknown = parser.parse_known_args()
-    env_limit = os.environ.get("THREAD_LIMIT")
-    cli_limit = args.thread_limit
-    thread_limit = None
-    try:
-        env_limit = int(env_limit) if env_limit is not None else None
-    except Exception:
-        env_limit = None
-    if env_limit is not None and cli_limit is not None:
-        thread_limit = min(env_limit, cli_limit)
-    elif env_limit is not None:
-        thread_limit = env_limit
-    elif cli_limit is not None:
-        thread_limit = cli_limit
-    else:
-        thread_limit = None
-    if thread_limit is not None:
-        log(f"Thread limit set to: {thread_limit}")
-    test_thread_limit(thread_limit=thread_limit)
-
-    log("Starting Thread Flare (nv-ingest compatible)...")
+    log("Starting Thread Flare...")
     log(f"Python version: {sys.version}")
 
     # === Cgroup/Process Limits Section ===
@@ -758,4 +730,8 @@ if __name__ == "__main__":
     test_ray_pipeline_simulation()
     
     # Thread limit test (potentially disruptive, so run last)
-    test_thread_limit()
+    if thread_limit is not None:
+        log(f"Thread limit set to: {thread_limit}")
+    else:
+        log("No thread limit set")
+    test_thread_limit(thread_limit=thread_limit)

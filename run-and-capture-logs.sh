@@ -28,13 +28,17 @@ POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
-        slim|cuda)
-            VARIANT="$1"
-            shift
-            ;;
         --thread-limit)
             THREAD_LIMIT="$2"
             shift
+            shift
+            ;;
+        --thread-limit=*)
+            THREAD_LIMIT="${key#*=}"
+            shift
+            ;;
+        slim|cuda)
+            VARIANT="$1"
             shift
             ;;
         -h|--help)
@@ -114,6 +118,12 @@ if [ -n "$THREAD_LIMIT" ]; then
     DOCKER_CLI_ARG="--thread-limit $THREAD_LIMIT"
     echo -e "${YELLOW}Thread limit set to: $THREAD_LIMIT${NC}"
 fi
+# Extra debug output for arguments and env
+echo -e "${YELLOW}About to run docker with:${NC}"
+echo "  docker run ${DOCKER_ARGS} $DOCKER_ENV_ARGS \"${IMAGE_NAME}\" $DOCKER_CLI_ARG"
+echo "  THREAD_LIMIT env: $THREAD_LIMIT"
+echo "  CLI arg: $DOCKER_CLI_ARG"
+echo "  Image: $IMAGE_NAME"
 if docker run ${DOCKER_ARGS} $DOCKER_ENV_ARGS "${IMAGE_NAME}" $DOCKER_CLI_ARG 2>&1 | tee -a "${LOG_FILE}"; then
     echo -e "\n${GREEN}✅ Thread Flare completed successfully!${NC}"
     EXIT_CODE=0

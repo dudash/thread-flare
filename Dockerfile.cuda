@@ -57,5 +57,4 @@ COPY thread_flare.py /workspace/thread_flare.py
 WORKDIR /workspace
 
 # Entrypoint using tini for proper signal handling
-ENTRYPOINT ["tini", "--"]
-CMD ["/opt/conda/envs/raydebug/bin/python", "/workspace/thread_flare.py"]
+ENTRYPOINT ["tini", "--", "/opt/conda/envs/raydebug/bin/python", "/workspace/thread_flare.py"]
